@@ -106,6 +106,39 @@ describe.each([
 
 		await expect(fetchText(url)).resolves.toMatchSnapshot();
 	});
+
+	// regression test for https://github.com/cloudflare/workers-sdk/issues/5297
+	// The runtime inspector can send messages larger than 1MB limit websocket message allowed by workers.
+	// Connecting directly to the inspector works fine, but we proxy the inspector messages
+	// through a worker (InspectorProxyWorker) which hits the limit.
+	// By logging a large string (2MB) and verifying that wrangler logs it to the console,
+	// we can verify that the inspector messages are being proxied successfully.
+	it.only("can receive large messages from the inspector", async () => {
+		const helper = new WranglerE2ETestHelper();
+		await helper.seed({
+			"wrangler.toml": dedent`
+                name = "${workerName}"
+                main = "src/index.ts"
+                compatibility_date = "2023-01-01"
+            `,
+			"src/index.ts": dedent`
+                export default {
+                    fetch(request) {
+                        console.log("a".repeat(1e6));
+
+                        return new Response("Hello World!")
+                    }
+                }
+            `,
+		});
+		const worker = helper.runLongLived(cmd);
+
+		const { url } = await worker.waitForReady();
+		await expect(fetchText(url)).resolves.toBe("Hello World!");
+
+		// this log message would've been larger than the 1MB default limit (1e6 * 16bit = 2MB)
+		await worker.readUntil(/a{1e6}/);
+	});
 });
 
 describe.each([
